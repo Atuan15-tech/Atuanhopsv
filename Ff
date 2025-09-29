@@ -1,0 +1,133 @@
+-- V3: Elite Performance & Stealth
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Caching và Khởi tạo ban đầu
+local NET_MODULE = ReplicatedStorage.Modules.Net
+local ATTACK_FOLDERS = {Workspace.Enemies, Workspace.Characters}
+local SEARCH_RADIUS = 65 -- Tăng nhẹ phạm vi
+
+-- Biến lưu trữ Remote Obfuscated (tìm kiếm một lần)
+local obfuscatedRemote, obfuscatedId
+local function findObfuscatedRemote(parent)
+    for _, n in parent:GetChildren() do
+        if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
+            obfuscatedRemote = n
+            obfuscatedId = n:GetAttribute("Id")
+            return true
+        end
+    end
+end
+
+-- Tìm kiếm ban đầu
+local remoteFolders = {ReplicatedStorage.Util, ReplicatedStorage.Common, ReplicatedStorage.Remotes, ReplicatedStorage.Assets, ReplicatedStorage.FX}
+for _, v in ipairs(remoteFolders) do
+    if findObfuscatedRemote(v) then break end
+    -- Lắng nghe ChildAdded một cách hiệu quả hơn
+    v.ChildAdded:Connect(function(n)
+        if n:IsA("RemoteEvent") and n:GetAttribute("Id") and not obfuscatedRemote then
+            obfuscatedRemote = n
+            obfuscatedId = n:GetAttribute("Id")
+        end
+    end)
+end
+
+-- Hàm tìm mục tiêu nhanh
+local function findTarget(character, rootPart)
+    local bestTarget = nil
+    local shortestDistance = SEARCH_RADIUS
+    local targetParts = {}
+
+    for _, folder in ipairs(ATTACK_FOLDERS) do
+        if not folder then continue end
+        for _, v in ipairs(folder:GetChildren()) do
+            if v ~= character and v:IsA("Model") then
+                local hrp = v:FindFirstChild("HumanoidRootPart")
+                local hum = v:FindFirstChild("Humanoid")
+                
+                if hrp and hum and hum.Health > 0 then
+                    local distance = (hrp.Position - rootPart.Position).Magnitude
+                    
+                    if distance < shortestDistance then
+                        local head = v:FindFirstChild("Head")
+                        if not head then continue end
+                        
+                        -- Chỉ cần Model và Head cho mục tiêu chính
+                        bestTarget = {v, head} 
+                        shortestDistance = distance
+                        
+                        -- Tìm kiếm các BasePart khác cho tham số thứ 3 (otherParts)
+                        local otherParts = {}
+                        for _, part in v:GetChildren() do
+                            if part:IsA("BasePart") and part ~= head then
+                                table.insert(otherParts, {v, part})
+                            end
+                        end
+                        targetParts = otherParts
+                    end
+                end
+            end
+        end
+    end
+    
+    return bestTarget, targetParts
+end
+
+
+-- Logic Fast Attack Chính - Sử dụng Stepped (Chạy trước vật lý)
+RunService.Stepped:Connect(function()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local tool = char:FindFirstChildOfClass("Tool")
+    
+    if not root or not tool or (tool:GetAttribute("WeaponType") ~= "Melee" and tool:GetAttribute("WeaponType") ~= "Sword") or not NET_MODULE then
+        return
+    end
+
+    local target, otherParts = findTarget(char, root)
+
+    if target then
+        local targetModel = target[1]
+        local targetHead = target[2]
+
+        pcall(function()
+            -- B1: Chuẩn bị Hit (RegisterHit)
+            NET_MODULE:RemoteEvent("RegisterHit", true)
+            
+            -- B2: Kích hoạt Tấn công (RegisterAttack)
+            NET_MODULE["RE/RegisterAttack"]:FireServer()
+            
+            -- B3: Gửi Hit Data (RE/RegisterHit)
+            -- Tạo chuỗi giả lập hit_id phức tạp hơn
+            local hit_id = ("%s%s"):format(
+                string.sub(tostring(LocalPlayer.UserId), 2, 4),
+                string.sub(tostring(math.random()), 3, 7)
+            )
+
+            -- Tham số 2: Chỉ gửi Model và Head trong mảng hit parts
+            local hitPartsList = {targetModel, targetHead} 
+            
+            NET_MODULE["RE/RegisterHit"]:FireServer(targetHead, hitPartsList, otherParts, hit_id)
+            
+            -- B4: Kích hoạt remote obfuscated (chống anti-cheat)
+            if obfuscatedRemote and obfuscatedId then
+                local obfuscated_string = string.gsub("RE/RegisterHit", ".", function(c)
+                    -- Sử dụng GetServerTimeNow/10%10 + 1 để tạo key
+                    local key = math.floor(Workspace:GetServerTimeNow() / 10 % 10) + 1
+                    return string.char(bit32.bxor(string.byte(c), key))
+                end)
+                
+                -- Tạo giá trị obfuscated cho ID (sử dụng seed)
+                local obfuscated_id = bit32.bxor(obfuscatedId + 909090, NET_MODULE.seed:InvokeServer() * 2)
+                
+                -- Fire Remote Event bị che giấu, chỉ gửi các tham số tối thiểu và cần thiết
+                cloneref(obfuscatedRemote):FireServer(obfuscated_string, obfuscated_id, targetHead, hitPartsList)
+            end
+        end)
+    end
+end)
