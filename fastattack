@@ -1,1 +1,167 @@
-y
+-- V7: Customizable Config & Attack Focus
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ======================================================================
+--                             CUSTOM CONFIG
+-- ======================================================================
+
+local CONFIG = {
+    -- Thời gian chờ tối thiểu giữa các chuỗi tấn công (giây)
+    -- Ví dụ: 0.05 giây = tối đa 20 đòn đánh/giây
+    ATTACK_DELAY = 0.05, 
+    
+    -- Phạm vi tìm kiếm mục tiêu (studs)
+    SEARCH_RADIUS = 85,
+}
+
+-- ======================================================================
+--                             END CONFIG
+-- ======================================================================
+
+
+-- Caching và Khởi tạo ban đầu
+local NET_MODULE = ReplicatedStorage.Modules.Net
+local lastAttackTime = 0 
+local obfuscatedRemote, obfuscatedId
+
+-- Setup Obfuscated Remote (Chỉ chạy 1 lần)
+task.spawn(function()
+    local remoteFolders = {ReplicatedStorage.Util, ReplicatedStorage.Common, ReplicatedStorage.Remotes, ReplicatedStorage.Assets, ReplicatedStorage.FX}
+    for _, v in ipairs(remoteFolders) do
+        for _, n in v:GetChildren() do
+            if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
+                obfuscatedRemote = n
+                obfuscatedId = n:GetAttribute("Id")
+                return
+            end
+        end
+        v.ChildAdded:Connect(function(n)
+            if n:IsA("RemoteEvent") and n:GetAttribute("Id") and not obfuscatedRemote then
+                obfuscatedRemote = n
+                obfuscatedId = n:GetAttribute("Id")
+            end
+        end)
+    end
+end)
+
+
+-- Hàm tìm mục tiêu với Fake Accuracy (Sử dụng CONFIG.SEARCH_RADIUS)
+local function findBestTarget(character, rootPart)
+    local bestTarget = nil
+    local shortestDistance = CONFIG.SEARCH_RADIUS
+    local targetParts = {}
+    
+    local params = OverlapParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {character} 
+
+    -- Tìm kiếm trong 10 BaseParts gần nhất trong phạm vi CONFIG.SEARCH_RADIUS
+    local partsInArea = Workspace:GetPartsInRadius(rootPart.Position, CONFIG.SEARCH_RADIUS, params, 10) 
+
+    for _, part in ipairs(partsInArea) do
+        if part.Parent and part.Parent:IsA("Model") and part.Parent:FindFirstChildOfClass("Humanoid") then
+            local targetModel = part.Parent
+            local hrp = targetModel:FindFirstChild("HumanoidRootPart")
+            local hum = targetModel:FindFirstChild("Humanoid")
+            
+            if targetModel ~= character and hrp and hum and hum.Health > 0 then
+                local distance = (hrp.Position - rootPart.Position).Magnitude
+                
+                if distance < shortestDistance then
+                    local head = targetModel:FindFirstChild("Head")
+                    if not head then continue end
+                    
+                    shortestDistance = distance
+                    
+                    -- Fake Accuracy: Tạo một Vector3 Offset ngẫu nhiên nhỏ
+                    local offset = Vector3.new(math.random() * 0.2 - 0.1, math.random() * 0.2 - 0.1, math.random() * 0.2 - 0.1)
+                    local fakeHitCFrame = head.CFrame * CFrame.new(offset) 
+
+                    bestTarget = {targetModel, fakeHitCFrame}
+                    
+                    -- Thu thập BaseParts phụ
+                    local tempOtherParts = {}
+                    for _, p in targetModel:GetChildren() do
+                        if p:IsA("BasePart") and p ~= head then
+                            table.insert(tempOtherParts, {targetModel, p})
+                        end
+                    end
+                    targetParts = tempOtherParts
+                end
+            end
+        end
+    end
+    
+    return bestTarget, targetParts
+end
+
+
+-- Logic Fast Attack Chính - Sử dụng Heartbeat (Áp dụng CONFIG.ATTACK_DELAY)
+RunService.Heartbeat:Connect(function(deltaTime)
+    local currentTime = Workspace:GetServerTimeNow()
+    
+    -- Kiểm tra cooldown dựa trên CONFIG.ATTACK_DELAY
+    if currentTime - lastAttackTime < CONFIG.ATTACK_DELAY or not LocalPlayer or not NET_MODULE then return end
+
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    
+    if not root or not tool or (tool:GetAttribute("WeaponType") ~= "Melee" and tool:GetAttribute("WeaponType") ~= "Sword") then
+        return
+    end
+
+    local target, otherParts = findBestTarget(char, root)
+
+    if target then
+        lastAttackTime = currentTime -- Cập nhật thời gian tấn công
+
+        local targetModel = target[1]
+        local fakeHitCFrame = target[2]
+        
+        -- Tách chuỗi tấn công vào một task riêng biệt để đảm bảo thời gian chính xác
+        task.spawn(function()
+            pcall(function()
+                
+                -- B1: Chuẩn bị Hit (Tick 1)
+                NET_MODULE:RemoteEvent("RegisterHit", true)
+                
+                -- B2: Kích hoạt Tấn công (Tick 2)
+                task.wait() 
+                NET_MODULE["RE/RegisterAttack"]:FireServer()
+                
+                -- B3: Gửi Hit Data (Tick 3)
+                task.wait() 
+                
+                local hit_id = ("%s%s%s"):format(
+                    string.sub(tostring(math.abs(math.floor(fakeHitCFrame.X * 1000))), 1, 3), 
+                    string.sub(tostring(math.abs(math.floor(fakeHitCFrame.Z * 1000))), 1, 3), 
+                    string.sub(tostring(math.random()), 3, 7)
+                )
+
+                local hitPartsList = {targetModel, targetModel:FindFirstChild("Head")} -- Đảm bảo Head là BasePart nếu cần
+                
+                -- Gửi CFrame đã được offset
+                NET_MODULE["RE/RegisterHit"]:FireServer(fakeHitCFrame, hitPartsList, otherParts, hit_id) 
+                
+                -- B4: Kích hoạt remote obfuscated (Tick 4)
+                task.wait()
+
+                if obfuscatedRemote and obfuscatedId then
+                    local obfuscated_string = string.gsub("RE/RegisterHit", ".", function(c)
+                        local key = math.floor(Workspace:GetServerTimeNow() / 10 % 10) + 1
+                        return string.char(bit32.bxor(string.byte(c), key))
+                    end)
+                    
+                    local obfuscated_id = bit32.bxor(obfuscatedId + 909090, NET_MODULE.seed:InvokeServer() * 2)
+                    
+                    cloneref(obfuscatedRemote):FireServer(obfuscated_string, obfuscated_id, fakeHitCFrame, hitPartsList)
+                end
+            end)
+        end)
+    end
+end)
