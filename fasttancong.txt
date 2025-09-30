@@ -1,0 +1,130 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local MAX_RANGE = 70
+local ATTACK_DELAY = 0.01
+
+local NetModule = ReplicatedStorage:WaitForChild("Modules"):FindFirstChild("Net") 
+local requiredNetModule = nil
+
+local remote, idremote = nil, nil
+
+local function initialize_net_module()
+    if NetModule and not requiredNetModule then
+        requiredNetModule = require(NetModule)
+        pcall(function()
+            requiredNetModule:RemoteEvent("RegisterHit", true)
+        end)
+    end
+end
+initialize_net_module()
+
+local function find_remote_and_connect(container)
+    if not NetModule then return end 
+
+    for _, n in ipairs(container:GetChildren()) do
+        if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
+            remote, idremote = n, n:GetAttribute("Id")
+            return true
+        end
+    end
+    
+    container.ChildAdded:Connect(function(n)
+        if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
+            remote, idremote = n, n:GetAttribute("Id")
+        end
+    end)
+    return false
+end
+
+local remoteFolders = {
+    ReplicatedStorage:FindFirstChild("Util"),
+    ReplicatedStorage:FindFirstChild("Common"),
+    ReplicatedStorage:FindFirstChild("Remotes"),
+    ReplicatedStorage:FindFirstChild("Assets"),
+    ReplicatedStorage:FindFirstChild("FX")
+}
+
+for _, v in ipairs(remoteFolders) do
+    if v and find_remote_and_connect(v) then
+        break
+    end
+end
+
+task.spawn(function()
+    if not NetModule or not requiredNetModule then return end
+
+    while task.wait(ATTACK_DELAY) do
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        
+        local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+        
+        if not root or not tool or (tool:GetAttribute("WeaponType") ~= "Melee" and tool:GetAttribute("WeaponType") ~= "Sword") then continue end
+
+        local target_parts = {}
+        local primary_target_model = nil
+        local closest_distance = math.huge
+        
+        for _, x in ipairs({Workspace:FindFirstChild("Enemies"), Workspace:FindFirstChild("Characters")}) do
+            if not x then continue end
+            
+            for _, v in ipairs(x:GetChildren()) do
+                if v == char then continue end
+
+                local hrp = v:FindFirstChild("HumanoidRootPart")
+                local hum = v:FindFirstChild("Humanoid")
+                
+                if hrp and hum and hum.Health > 0 then
+                    local distance = (hrp.Position - root.Position).Magnitude
+                    
+                    if distance <= MAX_RANGE then
+                        if distance < closest_distance then
+                            closest_distance = distance
+                            primary_target_model = v
+                        end
+                        
+                        for _, part in ipairs(v:GetChildren()) do
+                            if part:IsA("BasePart") then
+                                target_parts[#target_parts + 1] = {v, part}
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        if #target_parts > 0 then
+            pcall(function()
+                if not primary_target_model then return end
+
+                local target_head = primary_target_model:FindFirstChild("Head")
+                if not target_head then return end
+                
+                local netModule = NetModule
+                
+                netModule["RE/RegisterAttack"]:FireServer()
+                
+                local obfuscated_id = tostring(LocalPlayer.UserId):sub(2, 4) .. tostring(coroutine.running()):sub(11, 15)
+                netModule["RE/RegisterHit"]:FireServer(target_head, target_parts, {}, obfuscated_id)
+                
+                if remote then
+                    local xor_key = math.floor(Workspace:GetServerTimeNow() / 10 % 10) + 1
+                    local encrypted_name = string.gsub("RE/RegisterHit", ".", function(c)
+                        return string.char(bit32.bxor(string.byte(c), xor_key))
+                    end)
+                    
+                    local encrypted_id = bit32.bxor(idremote + 909090, netModule.seed:InvokeServer() * 2)
+                    
+                    cloneref(remote):FireServer(
+                        encrypted_name, 
+                        encrypted_id, 
+                        target_head, 
+                        target_parts
+                    )
+                end
+            end)
+        end
+    end
+end)
