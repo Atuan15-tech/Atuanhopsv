@@ -3,7 +3,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local MAX_RANGE = 70
-local ATTACK_DELAY = 0.01
+local ATTACK_DELAY = 0
 
 local NetModule = ReplicatedStorage:WaitForChild("Modules"):FindFirstChild("Net") 
 local requiredNetModule = nil
