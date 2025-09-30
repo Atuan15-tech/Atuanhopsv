@@ -1,0 +1,193 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local CONFIG = {
+    ATTACK_DELAY = 0.01,
+    SEARCH_RADIUS = 85,
+    HIT_OFFSET_RANGE = 0.2,
+}
+
+local NET_MODULE = ReplicatedStorage.Modules.Net
+local lastAttackTime = 0 
+local obfuscatedRemote, obfuscatedId
+
+local function setupObfuscatedRemote()
+    local remoteFolders = {ReplicatedStorage.Util, ReplicatedStorage.Common, ReplicatedStorage.Remotes, ReplicatedStorage.Assets, ReplicatedStorage.FX}
+    for _, v in ipairs(remoteFolders) do
+        for _, n in v:GetChildren() do
+            if n:IsA("RemoteEvent") and n:GetAttribute("Id") then
+                obfuscatedRemote = n
+                obfuscatedId = n:GetAttribute("Id")
+                return
+            end
+        end
+        v.ChildAdded:Connect(function(n)
+            if n:IsA("RemoteEvent") and n:GetAttribute("Id") and not obfuscatedRemote then
+                obfuscatedRemote = n
+                obfuscatedId = n:GetAttribute("Id")
+            end
+        end)
+    end
+end
+setupObfuscatedRemote()
+
+local function findBestTarget(character, rootPart)
+    local bestTarget = nil
+    local shortestDistance = CONFIG.SEARCH_RADIUS
+    local targetParts = {}
+    
+    local params = OverlapParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = {character} 
+
+    local partsInArea = Workspace:GetPartsInRadius(rootPart.Position, CONFIG.SEARCH_RADIUS, params, 10) 
+
+    for _, part in ipairs(partsInArea) do
+        if part.Parent and part.Parent:IsA("Model") and part.Parent:FindFirstChildOfClass("Humanoid") then
+            local targetModel = part.Parent
+            local hrp = targetModel:FindFirstChild("HumanoidRootPart")
+            local hum = targetModel:FindFirstChild("Humanoid")
+            
+            if targetModel ~= character and hrp and hum and hum.Health > 0 then
+                local distance = (hrp.Position - rootPart.Position).Magnitude
+                
+                if distance < shortestDistance then
+                    local head = targetModel:FindFirstChild("Head")
+                    if not head then continue end
+                    
+                    shortestDistance = distance
+                    
+                    local offset = Vector3.new(
+                        math.random() * CONFIG.HIT_OFFSET_RANGE - (CONFIG.HIT_OFFSET_RANGE/2), 
+                        math.random() * CONFIG.HIT_OFFSET_RANGE - (CONFIG.HIT_OFFSET_RANGE/2), 
+                        math.random() * CONFIG.HIT_OFFSET_RANGE - (CONFIG.HIT_OFFSET_RANGE/2)
+                    )
+                    local fakeHitCFrame = head.CFrame * CFrame.new(offset) 
+
+                    bestTarget = {targetModel, head, fakeHitCFrame}
+                    
+                    local tempOtherParts = {}
+                    for _, p in targetModel:GetChildren() do
+                        if p:IsA("BasePart") and p ~= head then
+                            table.insert(tempOtherParts, {targetModel, p})
+                        end
+                    end
+                    targetParts = tempOtherParts
+                end
+            end
+        end
+    end
+    
+    return bestTarget, targetParts
+end
+
+RunService.Heartbeat:Connect(function(deltaTime)
+    local currentTime = Workspace:GetServerTimeNow()
+    
+    if currentTime - lastAttackTime < CONFIG.ATTACK_DELAY or not LocalPlayer or not NET_MODULE then return end
+
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local tool = char and char:FindFirstChildOfClass("Tool")
+    
+    if not root or not tool or (tool:GetAttribute("WeaponType") ~= "Melee" and tool:GetAttribute("WeaponType") ~= "Sword") then
+        return
+    end
+
+    local target, otherParts = findBestTarget(char, root)
+
+    if target then
+        lastAttackTime = currentTime
+
+        local targetModel = target[1]
+        local targetHead = target[2]
+        local fakeHitCFrame = target[3]
+
+        
+        pcall(function()
+            
+            NET_MODULE:RemoteEvent("RegisterHit", true)
+            
+            NET_MODULE["RE/RegisterAttack"]:FireServer()
+            
+            local hit_id = ("%s%s%s%s"):format(
+                string.sub(tostring(math.abs(math.floor(fakeHitCFrame.X * 1000))), 1, 3), 
+                string.sub(tostring(math.abs(math.floor(fakeHitCFrame.Y * 1000))), 1, 3), 
+                string.sub(tostring(math.abs(math.floor(fakeHitCFrame.Z * 1000))), 1, 3), 
+                string.sub(tostring(math.random()), 3, 5)
+            )
+
+            local hitPartsList = {targetModel, targetHead} 
+            
+            NET_MODULE["RE/RegisterHit"]:FireServer(fakeHitCFrame, hitPartsList, otherParts, hit_id) 
+            
+            if obfuscatedRemote and obfuscatedId then
+                local obfuscated_string = string.gsub("RE/RegisterHit", ".", function(c)
+                    local key = math.floor(Workspace:GetServerTimeNow() / 10 % 10) + 1
+                    return string.char(bit32.bxor(string.byte(c), key))
+                end)
+                
+                local obfuscated_id = bit32.bxor(obfuscatedId + 909090, NET_MODULE.seed:InvokeServer() * 2)
+                
+                cloneref(obfuscatedRemote):FireServer(obfuscated_string, obfuscated_id, fakeHitCFrame, hitPartsList)
+            end
+        end)
+    end
+end)
+
+Code fps 7 màu
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+pcall(function() setfpscap(120) end)
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "RainbowFPS"
+screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 1000
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = game:GetService("CoreGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 120, 0, 30)
+frame.Position = UDim2.new(0, 10, 0, 10)
+frame.BackgroundTransparency = 1
+frame.Active = true
+frame.Draggable = true
+frame.Parent = screenGui
+
+local textLabel = Instance.new("TextLabel")
+textLabel.Size = UDim2.new(1, 0, 1, 0)
+textLabel.Position = UDim2.new(0, 0, 0, 0)
+textLabel.Font = Enum.Font.FredokaOne
+textLabel.TextScaled = true
+textLabel.BackgroundTransparency = 1
+textLabel.TextStrokeTransparency = 0.2
+textLabel.Text = "FPS: 0"
+textLabel.Parent = frame
+
+task.spawn(function()
+    local hue = 0
+    while true do
+        hue = (hue + 0.005) % 1
+        textLabel.TextColor3 = Color3.fromHSV(hue, 1, 1)
+        RunService.RenderStepped:Wait()
+    end
+end)
+
+local frameCount = 0
+local lastUpdate = tick()
+RunService.RenderStepped:Connect(function()
+    frameCount = frameCount + 1
+    local now = tick()
+    if now - lastUpdate >= 1 then
+        local fps = math.floor(frameCount / (now - lastUpdate))
+        textLabel.Text = "FPS: " .. tostring(fps)
+        frameCount = 0
+        lastUpdate = now
+    end
+end)
