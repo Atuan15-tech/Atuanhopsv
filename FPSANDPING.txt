@@ -1,0 +1,93 @@
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Stats = game:GetService("Stats")
+
+pcall(function() setfpscap(120) end)
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "RainbowFPS_Ping"
+screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 1000
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = game:GetService("CoreGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 200, 0, 30)
+frame.Position = UDim2.new(0, 10, 0, 10)
+frame.BackgroundTransparency = 1
+frame.Active = true
+frame.Draggable = true
+frame.Parent = screenGui
+
+local textLabel = Instance.new("TextLabel")
+textLabel.Size = UDim2.new(1, 0, 1, 0)
+textLabel.Position = UDim2.new(0, 0, 0, 0)
+textLabel.Font = Enum.Font.FredokaOne
+textLabel.TextScaled = true
+textLabel.BackgroundTransparency = 1
+textLabel.TextStrokeTransparency = 0.2
+textLabel.Text = "FPS: 0 | Ping: 0ms"
+textLabel.TextXAlignment = Enum.TextXAlignment.Left
+textLabel.Parent = frame
+
+local rainbowTask
+
+local function startRainbowEffect()
+    local hue = 0
+    while task.wait() do
+        hue = (hue + 0.005) % 1
+        textLabel.TextColor3 = Color3.fromHSV(hue, 1, 1)
+    end
+end
+
+rainbowTask = task.spawn(startRainbowEffect)
+
+if LocalPlayer then
+    LocalPlayer.AncestryChanged:Connect(function()
+        if not LocalPlayer:IsDescendantOf(game) then
+            task.cancel(rainbowTask)
+            screenGui:Destroy()
+        end
+    end)
+end
+
+local FRAME_SAMPLE_COUNT = 30
+local fpsHistory = {}
+local historyIndex = 1
+local smoothFPS = 0
+local currentFPS = 0
+
+RunService.Heartbeat:Connect(function(deltaTime)
+    currentFPS = math.floor(1 / deltaTime)
+
+    fpsHistory[historyIndex] = currentFPS
+    historyIndex = historyIndex % FRAME_SAMPLE_COUNT + 1
+    
+    local sum = 0
+    local count = 0
+    for _, fps in pairs(fpsHistory) do
+        sum = sum + fps
+        count = count + 1
+    end
+    smoothFPS = math.floor(sum / count)
+end)
+
+local lastUpdate = tick()
+
+RunService.Stepped:Connect(function()
+    local now = tick()
+    
+    if now - lastUpdate >= 0.2 then
+        local ping = math.floor(Stats:GetNetworkPing() * 1000)
+        
+        textLabel.Text = string.format(
+            "FPS: %d | Smooth: %d\nPing: %dms", 
+            currentFPS, 
+            smoothFPS, 
+            ping
+        )
+        
+        lastUpdate = now
+    end
+end)
