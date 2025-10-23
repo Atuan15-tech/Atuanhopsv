@@ -1,0 +1,379 @@
+-- 🌌 TUANXAURA HUB - Neon Blue Edition (Auto Join Marines, Glow UI, Modern Fonts)
+-- 👤 Made with love by ChatGPT x TuanxAura
+
+local DEFAULT_SETTINGS = {
+    AutoFindFruit = true,
+    AntiAFK = true,
+    AutoStoreFruit = true,
+    AutoHop = true,
+    AutoFruitESP = true,
+    AutoRejoinOnHopFail = true,
+    FruitScanInterval = 1.0,
+    HopTimeoutSeconds = 30,
+}
+
+repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer
+
+getgenv().Ran = getgenv().Ran or false
+if getgenv().Ran then return end
+getgenv().Ran = true
+
+_G.Primary = Color3.fromRGB(10, 10, 15)
+_G.AntiAFKStarted = false
+
+local _G_Settings = {}
+for k, v in pairs(DEFAULT_SETTINGS) do _G_Settings[k] = v end
+_G_Settings.ForceHopSignal = false
+
+local CONFIG_FILE = "TuanxAuraHub_Config.json"
+local _G_SaveConfigDebounce = false
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
+local OriginalPlaceId = game.PlaceId
+local Character, HumanoidRootPart
+
+-- 🧩 Auto Save Config
+local function SaveConfig()
+    if _G_SaveConfigDebounce then return end
+    _G_SaveConfigDebounce = true
+    task.spawn(function()
+        task.wait(0.5)
+        pcall(function()
+            writefile(CONFIG_FILE, HttpService:JSONEncode(_G_Settings))
+        end)
+        _G_SaveConfigDebounce = false
+    end)
+end
+
+local function LoadConfig()
+    if isfile(CONFIG_FILE) then
+        pcall(function()
+            local saved = HttpService:JSONDecode(readfile(CONFIG_FILE))
+            for k, v in pairs(saved) do if _G_Settings[k] ~= nil then _G_Settings[k] = v end end
+        end)
+    end
+end
+LoadConfig()
+
+-- 🧠 Helper
+local function SetProps(i, p) for k,v in pairs(p) do i[k]=v end return i end
+
+-- ⚡ Notify System (neon animation)
+local NotiText, NotiFrame
+local function Notify(msg)
+    if not NotiFrame or not NotiText then return end
+    NotiText.Text = msg
+    local show = TweenService:Create(NotiFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {Position = UDim2.new(0.5,0,0.05,0)})
+    local hide = TweenService:Create(NotiFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {Position = UDim2.new(0.5,0,-0.15,0)})
+    show:Play() show.Completed:Wait() task.wait(2.5) hide:Play()
+end
+
+-- 💡 Create Notify UI
+if CoreGui:FindFirstChild("TuanxAuraHub_Screen") then CoreGui.TuanxAuraHub_Screen:Destroy() end
+local gui = SetProps(Instance.new("ScreenGui"), {Name="TuanxAuraHub_Screen", Parent=CoreGui})
+NotiFrame = SetProps(Instance.new("Frame"), {
+    Parent=gui, AnchorPoint=Vector2.new(0.5,0), Position=UDim2.new(0.5,0,-0.15,0),
+    Size=UDim2.new(0,300,0,40), BackgroundColor3=Color3.fromRGB(20,20,30), BackgroundTransparency=0.1
+})
+Instance.new("UICorner", NotiFrame).CornerRadius = UDim.new(0,8)
+Instance.new("UIStroke", NotiFrame).Color = Color3.fromRGB(0,255,180)
+local grad = Instance.new("UIGradient", NotiFrame)
+grad.Color = ColorSequence.new{ColorSequenceKeypoint.new(0,Color3.fromRGB(0,200,255)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,255,180))}
+grad.Rotation = 45
+task.spawn(function() while task.wait(0.05) do grad.Rotation = (grad.Rotation + 1)%360 end end)
+NotiText = SetProps(Instance.new("TextLabel"), {
+    Parent=NotiFrame, Size=UDim2.new(1,0,1,0), BackgroundTransparency=1, Font=Enum.Font.Ubuntu,
+    TextColor3=Color3.fromRGB(255,255,255), TextSize=16, Text="TuanxAura Hub Loaded"
+})
+
+-- 🧍 Character check
+local function EnsureCharacter()
+    Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    HumanoidRootPart = Character:WaitForChild("HumanoidRootPart",10)
+end
+EnsureCharacter()
+
+-- 🚫 AntiAFK
+LocalPlayer.Idled:Connect(function()
+    if _G.AntiAFKStarted then return end
+    _G.AntiAFKStarted = true
+    task.spawn(function()
+        while task.wait(3) do
+            if _G_Settings.AntiAFK then
+                game.VirtualUser:Button2Down(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
+                task.wait(1)
+                game.VirtualUser:Button2Up(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
+            end
+        end
+    end)
+end)
+
+task.spawn(function() Notify("🌌 TUANXAURA HUB - Loaded Successfully!") end)
+-- 📘 PHẦN 2 - UI Chính + Nút Toggle + Auto Join Team (Marines)
+
+-- ⚙️ Hàm tạo hiệu ứng animation cho UI chính
+local function AnimateOpen(frame)
+    frame.Size = UDim2.new(0, 0, 0, 0)
+    frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    frame.AnchorPoint = Vector2.new(0.5, 0.5)
+    frame.BackgroundTransparency = 1
+
+    local tween1 = TweenService:Create(frame, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = UDim2.new(0, 280, 0, 360),
+        BackgroundTransparency = 0.08
+    })
+    tween1:Play()
+end
+
+-- 🌟 Tạo UI chính
+local MainGui = Instance.new("ScreenGui")
+MainGui.Name = "TuanxAuraHub_Main"
+MainGui.Parent = CoreGui
+
+local MainFrame = SetProps(Instance.new("Frame"), {
+    Name = "MainFrame",
+    Parent = MainGui,
+    BackgroundColor3 = Color3.fromRGB(15, 15, 25),
+    BackgroundTransparency = 0.08,
+    Size = UDim2.new(0, 280, 0, 360),
+    Position = UDim2.new(0.35, 0, 0.3, 0)
+})
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
+local Stroke = Instance.new("UIStroke", MainFrame)
+Stroke.Color = Color3.fromRGB(0, 255, 180)
+Stroke.Thickness = 1.6
+
+-- 🧩 Animation mở khung UI
+AnimateOpen(MainFrame)
+
+-- 🌌 Header với chữ Glow Neon
+local Header = SetProps(Instance.new("TextLabel"), {
+    Name = "Header",
+    Parent = MainFrame,
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0, 0, 0, 10),
+    Size = UDim2.new(1, 0, 0, 40),
+    Font = Enum.Font.FredokaOne,
+    Text = "TUANXAURA HUB",
+    TextSize = 22,
+    TextColor3 = Color3.fromRGB(0, 255, 180),
+    TextStrokeTransparency = 0.4,
+    TextYAlignment = Enum.TextYAlignment.Center
+})
+
+-- Hiệu ứng phát sáng chữ (Glow Neon Loop)
+task.spawn(function()
+    while true do
+        local glow = math.abs(math.sin(tick() * 2)) * 0.6 + 0.4
+        Header.TextTransparency = 1 - glow
+        Header.TextStrokeTransparency = glow
+        task.wait(0.05)
+    end
+end)
+
+-- 🧭 Status Label
+local StatusLabel = SetProps(Instance.new("TextLabel"), {
+    Parent = MainFrame,
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0.05, 0, 0.17, 0),
+    Size = UDim2.new(0.9, 0, 0, 20),
+    Font = Enum.Font.Ubuntu,
+    Text = "Status: Initializing...",
+    TextColor3 = Color3.fromRGB(180, 255, 220),
+    TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Center
+})
+
+-- 🔘 Khung nút điều khiển
+local ControlFrame = SetProps(Instance.new("Frame"), {
+    Parent = MainFrame,
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0.05, 0, 0.27, 0),
+    Size = UDim2.new(0.9, 0, 0.65, 0)
+})
+
+local UIGrid = Instance.new("UIGridLayout", ControlFrame)
+UIGrid.CellSize = UDim2.new(0.5, -5, 0, 32)
+UIGrid.CellPadding = UDim2.new(0, 6, 0, 6)
+
+-- ⚙️ Hàm tạo nút Toggle
+local function CreateButton(parent, label, key)
+    local btn = Instance.new("TextButton")
+    btn.Parent = parent
+    btn.Size = UDim2.new(0, 100, 0, 32)
+    btn.Font = Enum.Font.GothamSemibold
+    btn.TextSize = 13
+    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.Text = label .. ": " .. (_G_Settings[key] and "ON" or "OFF")
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+    local stroke = Instance.new("UIStroke", btn)
+    stroke.Color = Color3.fromRGB(0, 255, 180)
+    stroke.Thickness = 1
+
+    btn.MouseButton1Click:Connect(function()
+        _G_Settings[key] = not _G_Settings[key]
+        btn.Text = label .. ": " .. (_G_Settings[key] and "ON" or "OFF")
+        if _G_Settings[key] then
+            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(20, 70, 50)}):Play()
+        else
+            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(25, 25, 35)}):Play()
+        end
+        SaveConfig()
+    end)
+end
+
+-- 🟢 Các nút chính
+CreateButton(ControlFrame, "Auto Find", "AutoFindFruit")
+CreateButton(ControlFrame, "Auto Hop", "AutoHop")
+CreateButton(ControlFrame, "Anti AFK", "AntiAFK")
+CreateButton(ControlFrame, "Auto Store", "AutoStoreFruit")
+CreateButton(ControlFrame, "Auto Rejoin", "AutoRejoinOnHopFail")
+CreateButton(ControlFrame, "Fruit ESP", "AutoFruitESP")
+
+-- 🧭 Nút lưu config thủ công
+local SaveButton = Instance.new("TextButton")
+SaveButton.Parent = ControlFrame
+SaveButton.Font = Enum.Font.GothamSemibold
+SaveButton.Text = "💾 Save Config"
+SaveButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+SaveButton.Size = UDim2.new(0, 120, 0, 32)
+SaveButton.BackgroundColor3 = Color3.fromRGB(0, 100, 80)
+Instance.new("UICorner", SaveButton)
+SaveButton.MouseButton1Click:Connect(function()
+    SaveConfig()
+    Notify("✅ Config Saved")
+end)
+
+-- 🪖 Auto Join Team Marines
+task.spawn(function()
+    local gui = Players.LocalPlayer:WaitForChild("PlayerGui", 10)
+    local main = gui:WaitForChild("Main", 10)
+    local choose = main:WaitForChild("ChooseTeam", 10)
+
+    if choose then
+        repeat task.wait() until choose.Visible == true
+        pcall(function()
+            ReplicatedStorage.Remotes.CommF_:InvokeServer("SetTeam", "Marines")
+            Notify("⚓ Auto Joined: Marines Team!")
+        end)
+        task.wait(2)
+    end
+end)
+-- 📘 PHẦN 3 - Logic chính: FruitFinder, Store, Hop, Notify & Vòng lặp chính
+
+-- ⚡ Teleport đến Fruit
+local function TeleportToFruit(fruitHandle)
+    if not HumanoidRootPart or not HumanoidRootPart.Parent then return end
+    local distance = (HumanoidRootPart.Position - fruitHandle.Position).Magnitude
+    local time = math.max(0.2, distance / 2500)
+
+    local tween = TweenService:Create(
+        HumanoidRootPart,
+        TweenInfo.new(time, Enum.EasingStyle.Linear),
+        {CFrame = CFrame.new(fruitHandle.Position + Vector3.new(0, 2, 0))}
+    )
+    tween:Play()
+    tween.Completed:Wait()
+    HumanoidRootPart.CFrame = CFrame.new(fruitHandle.Position + Vector3.new(0, 2, 0))
+end
+
+-- 🍇 Tìm Fruit trong Workspace
+local function FindFruit()
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj.Name:find("Fruit") and obj:FindFirstChild("Handle") then
+            return obj
+        end
+    end
+    return nil
+end
+
+-- 🧺 Tự động cất Fruit
+local function AutoStoreFruit()
+    if not _G_Settings.AutoStoreFruit or not LocalPlayer.Character then return end
+    for _, tool in pairs(LocalPlayer.Backpack:GetChildren()) do
+        if tool.Name:find("Fruit") then
+            local name = tool:GetAttribute("OriginalName")
+            if name then
+                pcall(function()
+                    ReplicatedStorage.Remotes.CommF_:InvokeServer("StoreFruit", name, tool)
+                end)
+                Notify("🥭 Stored Fruit: " .. name)
+                task.wait(0.5)
+            end
+        end
+    end
+end
+
+-- 🌐 Tự động Hop server khi không có Fruit
+local function ExecuteServerHop()
+    task.spawn(function()
+        Notify("🔄 Hopping Server...")
+        local PlaceId = game.PlaceId
+        local success, servers = pcall(function()
+            return HttpService:JSONDecode(game:HttpGet(
+                "https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+            ))
+        end)
+        if not success then return Notify("❌ Failed to get server list!") end
+        for _, srv in pairs(servers.data) do
+            if srv.playing < srv.maxPlayers then
+                TeleportService:TeleportToPlaceInstance(PlaceId, srv.id, LocalPlayer)
+                return
+            end
+        end
+        Notify("⚠️ No suitable server found.")
+    end)
+end
+
+-- 🌈 ESP Highlight Fruit
+local function FruitESP()
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj.Name:find("Fruit") and obj:FindFirstChild("Handle") then
+            if not obj.Handle:FindFirstChild("Highlight") then
+                local h = Instance.new("Highlight")
+                h.FillColor = Color3.fromRGB(0, 255, 180)
+                h.OutlineColor = Color3.fromRGB(255, 255, 255)
+                h.FillTransparency = 0.4
+                h.Parent = obj.Handle
+            end
+        end
+    end
+end
+
+-- 🕹️ Vòng lặp chính
+task.spawn(function()
+    local noFruitTime = 0
+    while task.wait(_G_Settings.FruitScanInterval) do
+        if _G_Settings.AutoFruitESP then FruitESP() end
+        local fruit = FindFruit()
+        if fruit then
+            noFruitTime = 0
+            StatusLabel.Text = "🍏 Fruit Found: " .. fruit.Name
+            if _G_Settings.AutoFindFruit then TeleportToFruit(fruit.Handle) end
+            AutoStoreFruit()
+        else
+            noFruitTime += _G_Settings.FruitScanInterval
+            StatusLabel.Text = string.format("🔍 Scanning... (%.1fs)", noFruitTime)
+            if _G_Settings.AutoHop and noFruitTime >= _G_Settings.HopTimeoutSeconds then
+                ExecuteServerHop()
+                noFruitTime = 0
+            end
+        end
+    end
+end)
+
+-- 💾 Lưu config mỗi 60s
+task.spawn(function()
+    while task.wait(60) do SaveConfig() end
+end)
+
+Notify("🚀 All Systems Ready - Enjoy TUANXAURA HUB!")
