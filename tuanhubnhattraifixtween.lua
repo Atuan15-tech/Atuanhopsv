@@ -10,7 +10,7 @@ local SETTINGS = {
     AutoRejoinOnHopFail = true,
     FruitScanInterval = 1.0,
     HopTimeoutSeconds = 30,
-    SafeTeleportSpeed = 350,       -- reduced speed to avoid teleport issues
+    SafeTeleportSpeed = 250,       -- reduced speed to avoid teleport issues
     StoreAttemptInterval = 1.2,    -- how often to attempt storing backpack fruits
     ESPUpdateInterval = 0.9,
     SessionTimerUpdate = 1.0,
@@ -161,7 +161,7 @@ task.spawn(function()
                 if dist then rec.lbl.Text = string.format("🍍 %s (%dm)", tostring(name), dist) else rec.lbl.Text = tostring("🍍 "..tostring(name)) end
             end)
         end
-        task.wait(SETTINGS.ESPUpdateInterval)
+        task.wait(SETTINGS.ESPUpdateInterval)250
     end
 end)
 -- SAFE STEP-BY-STEP TELEPORT function (replaces SafeTweenToPosition)
